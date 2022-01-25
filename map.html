@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>BDMAP</title>
+    <style type="text/css">
+        html {height: 100%}
+        body {height: 100%;margin: 0px;padding: 0px}
+        #container {height: 100%}
+    </style>
+    <script type="text/javascript" src="http://api.map.baidu.com/getscript?v=3.0&ak=你的密钥"></script>
+	<script type="text/javascript" src="http://api.map.baidu.com/library/DistanceTool/1.2/src/DistanceTool_min.js"></script>
+	<script type="text/javascript" src="CoordinateTransform.js"></script>
+	<script type="text/javascript" src="http://api.map.baidu.com/library/DrawingManager/1.4/src/DrawingManager_min.js"></script>
+	<link rel="stylesheet" href="http://api.map.baidu.com/library/DrawingManager/1.4/src/DrawingManager_min.css" />
+	<script type="text/javascript" src="qwebchannel.js"></script>
+</head>
+<body>
+	<div id="container"></div>
+</body>
+</html>
+
+<script type="text/javascript">
+    var map = new BMap.Map("container");  // 创建地图实例
+    map.centerAndZoom(new BMap.Point(100.939631,33.078577), 5);  // 初始化地图，设置中心点坐标和地图级别
+    map.enableScrollWheelZoom(); //开启滚轮缩放
+    map.disableDoubleClickZoom();
+    map.addControl(new BMap.NavigationControl({ type: BMAP_NAVIGATION_CONTROL_LARGE, showZoomInfo: true }));
+    map.addControl(new BMap.MapTypeControl({ mapTypes: [BMAP_NORMAL_MAP, BMAP_HYBRID_MAP], anchor: BMAP_ANCHOR_TOP_LEFT, offset: new BMap.Size(80, 50)}));
+    map.addControl(new BMap.ScaleControl({ anchor: BMAP_ANCHOR_TOP_LEFT }));
+	
+	var originPointMarker = new BMap.Marker;  //原点marker
+	var originPointLabel = new BMap.Label("H",{offset: new BMap.Size(4,4)});
+	originPointLabel.setStyle({
+            color: "white",
+            backgroundColor: "0",
+            border: "0",
+            fontsize: "13px"
+        });
+	originPointMarker.setLabel(originPointLabel);
+	
+	var boatMarker = new BMap.Marker;  //艇的marker
+    var boatIcon = new BMap.Symbol(BMap_Symbol_SHAPE_FORWARD_CLOSED_ARROW, { //BMap_Symbol_SHAPE_PLANE
+        scale: 1.5,
+        strokeWeight: 1,
+        fillColor: "red",
+        fillOpacity: 0.8
+    });
+    var boatLabel = new BMap.Label("0mD，0mH", { offset: new BMap.Size(20, -20) });
+    boatLabel.setStyle({ color: "black", fontSize: "15px" });
+    var boatPoints = new Array();  //保存艇的轨迹点
+    var boatTrackPolyline = new BMap.Polyline([], { strokeColor: "green", strokeWeight: 2, strokeOpacity: 0.5 });
+
+	var wayPoints = new Array();
+    var wayPointsMarker = new Array();  //保存点覆盖物
+	var wayPointsPolyline = new BMap.Polyline([], { strokeColor: "red", strokeWeight: 2, strokeOpacity: 0.5, strokeStyle: "dashed"});
+    var polylines = new Array();  //保存折线覆盖物
+    var circles = new Array();  //保存圆覆盖物
+    var polygon = new Array();  //保存多边形覆盖物
+
+    var styleOptions = {
+        strokeColor: "red",    //边线颜色。
+        fillColor: "red",      //填充颜色。当参数为空时，圆形将没有填充效果。
+        strokeWeight: 2,       //边线的宽度，以像素为单位。
+        strokeOpacity: 0.8,	   //边线透明度，取值范围0 - 1。
+        fillOpacity: 0.2,      //填充的透明度，取值范围0 - 1。
+        strokeStyle: 'solid' //边线的样式，solid或dashed。
+    }
+	var dashedStyleOptions = {
+		strokeColor: "red",    //边线颜色。
+		fillColor: "red",      //填充颜色。当参数为空时，圆形将没有填充效果。
+		strokeWeight: 2,       //边线的宽度，以像素为单位。
+		strokeOpacity: 0.5,	   //边线透明度，取值范围0 - 1。
+		fillOpacity: 0.2,      //填充的透明度，取值范围0 - 1。
+		strokeStyle: 'dashed' //边线的样式，solid或dashed。
+	}
+	
+    //实例化鼠标绘制工具
+    var drawingManager = new BMapLib.DrawingManager(map, {
+        isOpen: false, //是否开启绘制模式
+        enableDrawingTool: true, //是否显示工具栏
+        enableCalculate: true,
+        drawingToolOptions: {
+            anchor: BMAP_ANCHOR_TOP_RIGHT, //位置
+            offset: new BMap.Size(5, 5), //偏离值
+        },
+        circleOptions: styleOptions, //圆的样式
+        polylineOptions: dashedStyleOptions, //线的样式
+        polygonOptions: styleOptions, //多边形的样式
+        rectangleOptions: styleOptions //矩形的样式
+    });
+	
+	
+	function overlay_style(e) {
+        var p = e.target;
+        if (p instanceof BMap.Marker) {
+            alert("该覆盖物是点，点的坐标是：" + p.getPosition().lng + "," + p.getPosition().lat);
+        }
+        else if (p instanceof BMap.Circle) {
+            var bdCenter = p.getCenter();
+            var wgsCenter = bd09towgs84(bdCenter.lng, bdCenter.lat);
+            alert("圆心: " + wgsCenter[0].toFixed(7) + ", " + wgsCenter[1].toFixed(7) + "\n" + "半径: " + p.getRadius().toFixed(1) + "m");
+        }
+        else if (p instanceof BMap.Polyline) {
+            var polylinePoints = p.getPath();
+            var str = "航线路径点:\n";
+            for (var i = 0; i < polylinePoints.length; i++) {
+                var bdPos = polylinePoints[i];
+                var wgsPos = bd09towgs84(bdPos.lng, bdPos.lat);
+                str += ("ID" + i + ": " + wgsPos[0].toFixed(7) + ", " + wgsPos[1].toFixed(7) + "\n"); 
+            }
+            alert(str);
+        } else if (p instanceof BMap.Polygon){
+            var polygonPoints = p.getPath();
+            var str = "区域边界点:\n";
+            for (var i = 0; i < polygonPoints.length; i++) {
+                var bdPos = polygonPoints[i];
+                var wgsPos = bd09towgs84(bdPos.lng, bdPos.lat);
+                str += ("ID" + i + ": " + wgsPos[0].toFixed(7) + ", " + wgsPos[1].toFixed(7) + "\n");
+            }
+            alert(str);
+        }
+    }
+
+    function markerDragendEvent(e) {
+        var bdPos = e.point;
+        var wgsPos = bd09towgs84(bdPos.lng, bdPos.lat);
+        var ID = e.target.getLabel().content;
+        e.target.setTitle("ID" + ID + ":" + wgsPos[0].toFixed(7) + "," + wgsPos[1].toFixed(7));
+		wayPoints.splice(ID,1,bdPos);
+		if(wayPoints.length > 1)
+			wayPointsPolyline.setPath(wayPoints);
+		loadWaypoints();
+    }
+
+    function taskOverlaysComplete(e) {
+        if (e.overlay instanceof BMap.Marker) {
+            wayPointsMarker.push(e.overlay);
+            var bdPos = e.overlay.getPosition();
+            var wgsPos = bd09towgs84(bdPos.lng, bdPos.lat);
+            var lastIndex = wayPointsMarker.length - 1;
+            wayPointsMarker[lastIndex].setTitle("ID" + lastIndex + ":" + wgsPos[0].toFixed(7) + "," + wgsPos[1].toFixed(7));
+            var label = new BMap.Label(wayPointsMarker.length - 1, { offset: new BMap.Size(5, 3) });
+            label.setStyle({
+                color: "white",
+                backgroundColor: "0",
+                border: "0",
+                fontsize: "13px"
+            });
+            wayPointsMarker[lastIndex].setLabel(label);
+            wayPointsMarker[lastIndex].enableDragging();
+            wayPointsMarker[lastIndex].addEventListener("dragend", markerDragendEvent);
+			wayPoints.push(bdPos);
+			if(wayPoints.length == 1)
+			{
+				wayPointsPolyline.setPath(wayPoints);
+				map.addOverlay(wayPointsPolyline);
+			}else if(wayPoints.length > 1)
+				wayPointsPolyline.setPath(wayPoints);
+        }
+        else if (e.overlay instanceof BMap.Polyline) {
+            e.overlay.addEventListener("click", overlay_style);
+            e.overlay.enableEditing();
+            polylines.push(e.overlay);
+        }
+        else if (e.overlay instanceof BMap.Circle) {
+            e.overlay.addEventListener("click", overlay_style);
+            //e.overlay.enableEditing();
+            circles.push(e.overlay);
+        }            
+        else if (e.overlay instanceof BMap.Polygon) {
+            e.overlay.addEventListener("click", overlay_style);
+            //e.overlay.enableEditing();
+            polygon.push(e.overlay);
+        }
+    }
+    drawingManager.addEventListener("overlaycomplete", taskOverlaysComplete);
+	
+	function showBoatPosition(lng, lat, course) {
+        var currentPosition = wgs84tobd09(lng, lat);
+        var currentPoint = new BMap.Point(currentPosition[0], currentPosition[1]);
+        boatIcon.setRotation(course);
+        //boatLabel.setContent(depth.toFixed(1) + "mD，"+ height.toFixed(1) + "mH");
+        boatMarker.setIcon(boatIcon);
+        //boatMarker.setLabel(boatLabel);
+        boatMarker.setPosition(currentPoint);
+        map.addOverlay(boatMarker);
+		
+		boatPoints.push(currentPoint);
+		if (boatPoints.length == 1) {
+			boatTrackPolyline.setPath(boatPoints);
+			map.addOverlay(boatTrackPolyline);                
+		}else if(boatPoints.length > 1)
+			boatTrackPolyline.setPath(boatPoints);
+    }
+	
+	//向航点序列追加航点,由Qt调用
+    function addpoint(lng, lat) {
+        var bdPos = wgs84tobd09(lng, lat);
+        var point = new BMap.Point(bdPos[0], bdPos[1]);
+        var addMarker = new BMap.Marker(point);
+        map.addOverlay(addMarker);
+        wayPointsMarker.push(addMarker);
+        var lastIndex = wayPointsMarker.length - 1;
+        wayPointsMarker[lastIndex].setTitle("ID" + lastIndex + ":" + lng.toFixed(7) + "," + lat.toFixed(7));
+        var label = new BMap.Label(wayPointsMarker.length - 1, { offset: new BMap.Size(5, 3) });
+        label.setStyle({
+            color: "white",
+            backgroundColor: "0",
+            border: "0",
+            fontsize: "13px"
+        });
+        wayPointsMarker[lastIndex].setLabel(label);
+        wayPointsMarker[lastIndex].enableDragging();
+        wayPointsMarker[lastIndex].addEventListener("dragend", markerDragendEvent);
+		
+		wayPoints.push(point);
+		if(wayPoints.length > 1)
+		{
+			wayPointsPolyline.setPath(wayPoints);
+			map.addOverlay(wayPointsPolyline);
+		}else if(wayPoints.length > 1)
+			wayPointsPolyline.setPath(wayPoints);
+    }
+	
+	//添加围栏序列点
+	function addFencePoint(lng,lat){
+		var bdPos = wgs84tobd09(lng, lat);
+		var point = new BMap.Point(bdPos[0], bdPos[1]);
+		fencePoints.push(point);
+	}
+	
+	//添加围栏
+	function addFence(){
+		fencePolygon.setPath(fencePoints);
+		map.addOverlay(fencePolygon);
+	}
+	
+	//清除围栏
+	function clearFence(){
+		fencePoints = [];
+		map.removeOverlay(fencePolygon);
+	}
+
+	//标定原点，由Qt调用	
+	function addOriginPoint(lng, lat){
+		var bdPos = wgs84tobd09(lng,lat);
+		originPointMarker.setPosition(new BMap.Point(bdPos[0],bdPos[1]));
+		originPointMarker.setLabel(originPointLabel);
+		originPointMarker.setTitle(lng.toFixed(7) + "," + lat.toFixed(7));
+		map.addOverlay(originPointMarker);
+		map.panTo(new BMap.Point(bdPos[0],bdPos[1]));
+	}
+	
+	//调整地图中心
+	function mapPanTo(lng,lat){
+		var bdPos = wgs84tobd09(lng,lat);
+		map.centerAndZoom(new BMap.Point(bdPos[0],bdPos[1]), 17);
+	}
+	
+    //修改已存在航点的位置，如果修改对象不存在，则不修改，该函数由Qt调用
+    function movepoint(id, lng, lat) {
+        if (id < wayPointsMarker.length) {
+            var bdPos = wgs84tobd09(lng, lat);
+            var point = new BMap.Point(bdPos[0], bdPos[1]);
+            wayPointsMarker[id].setPosition(point);
+            wayPointsMarker[id].setTitle("ID" + id + ":" + lng + "," + lat);
+			wayPoints.splice(id,1,bdPos);
+			if(wayPoints.length > 1)
+				wayPointsPolyline.setPath(wayPoints);
+			loadWaypoints();
+		}
+    }
+	
+	new QWebChannel(qt.webChannelTransport,
+    function(channel){
+        window.bridge=channel.objects.passId;//注册一个通道,将桥梁连接到qt下的passId，形成通路
+		channel.objects.passId.addPointClicked.connect(addpoint);
+		channel.objects.passId.movePointClicked.connect(movepoint);
+		channel.objects.passId.boatPosUpdated.connect(showBoatPosition);
+		channel.objects.passId.setOriginPoint.connect(addOriginPoint);
+		channel.objects.passId.clearWaypointsClicked.connect(clearWaypoints);
+		channel.objects.passId.clearAllClicked.connect(clearAll);
+		channel.objects.passId.addFencePointClicked.connect(addFencePoint);
+		channel.objects.passId.addFenceClicked.connect(addFence);
+		channel.objects.passId.clearFenceClicked.connect(clearFence);
+		channel.objects.passId.panToClicked.connect(mapPanTo);
+		channel.objects.passId.clearTrackClicked.connect(clearTrack);
+	});
+	
+	function transInfo(e) {
+        var wgsPoint = bd09towgs84(e.point.lng, e.point.lat);
+        window.bridge.getMousePoint(wgsPoint[0].toFixed(7), wgsPoint[1].toFixed(7));//getMousePoint()为qt里公有槽函数
+    }
+    map.addEventListener("mousemove", transInfo);
+	
+	//打开测量工具
+    var myDis = new BMapLib.DistanceTool(map);
+    function ruler() {
+        myDis.open();
+    }
+
+    function loadWaypoints() {
+        window.bridge.transTask(0, wayPointsMarker.length);
+        for (var i = 0; i < wayPointsMarker.length; i++) {
+            var wgsPos = bd09towgs84(wayPointsMarker[i].getPosition().lng, wayPointsMarker[i].getPosition().lat);
+            window.bridge.transPoints(i, wgsPos[0], wgsPos[1]);
+        }
+    }
+    function loadWayline() {
+        var points = polylines[polylines.length - 1].getPath();
+        window.bridge.transTask(1, points.length);
+        for (var i = 0; i < points.length; i++) {
+            var wgsPos = bd09towgs84(points[i].lng, points[i].lat);
+            window.bridge.transPoints(i, wgsPos[0], wgsPos[1]);
+        }
+    }
+    function loadCircle() {
+        var point = circles[circles.length - 1].getCenter();
+        var radius = circles[circles.length - 1].getRadius();
+        window.bridge.transTask(3, 2);
+        var wgsPos = bd09towgs84(point.lng, point.lat);
+        window.bridge.transPoints(0, wgsPos[0], wgsPos[1]);
+        window.bridge.transPoints(1, radius, 0);
+    }
+    function loadZone() {
+        var points = polygon[polylines.length - 1].getPath();
+        window.bridge.transTask(2, points.length);
+        for (var i = 0; i < points.length; i++) {
+            var wgsPos = bd09towgs84(points[i].lng, points[i].lat);
+            window.bridge.transPoints(i, wgsPos[0], wgsPos[1]);
+        }
+    }
+    function clearTrack() {
+        boatPoints = [];
+        map.removeOverlay(boatTrackPolyline);
+    }
+    function clearWaypoints() {
+        var len = wayPointsMarker.length;
+        for (var i = 0; i < len; i++)
+            map.removeOverlay(wayPointsMarker.shift());
+		wayPoints = [];
+		map.removeOverlay(wayPointsPolyline);
+    }
+    function clearWayline() {
+        var len = polylines.length;
+        for (var i = 0; i < len; i++)
+            map.removeOverlay(polylines.shift());
+    }
+    function clearCircle() {
+        var len = circles.length;
+        for (var i = 0; i < len; i++)
+            map.removeOverlay(circles.shift());
+    }
+    function clearZone() {
+        var len = polygon.length;
+        for (var i = 0; i < len; i++)
+            map.removeOverlay(polygon.shift());
+    }
+    function clearAll() {
+		clearTrack();
+        clearWaypoints();
+        clearWayline();
+        clearCircle();
+        clearZone();
+        map.clearOverlays();
+    }
+	function reLoadMap(){
+	    window.bridge.reloadMap();
+	}
+	
+	var menu = new BMap.ContextMenu();
+    var txtToolMenuItem = [
+        {
+            text: '测量工具',
+            callback: ruler
+        },
+		{
+			text: '清除围栏',
+			callback: clearFence
+		}
+    ];
+    var txtLoadMenuItem = [
+        {
+            text: '加载航点',
+            callback: loadWaypoints
+        },
+        {
+            text: '加载航线',
+            callback: loadWayline
+        },
+        {
+            text: '加载圆',
+            callback: loadCircle
+        },
+        {
+            text: '加载区域',
+            callback: loadZone
+        }
+    ];
+    var txtClearMenuItem = [
+        {
+            text: '清除轨迹',
+            callback: clearTrack
+        },
+        {
+            text: '清除航点',
+            callback: clearWaypoints
+        },
+        {
+            text: '清除航线',
+            callback: clearWayline
+        },
+        {
+            text: '清除圆',
+            callback: clearCircle
+        },
+        {
+            text: '清除区域',
+            callback: clearZone
+        },
+        {
+            text: '清除所有',
+            callback: clearAll
+        }
+    ];
+	var txtReloadMenuItem = [
+	    {
+		    text:'重新加载地图',
+			callback: reLoadMap
+		}
+	];
+    for (var i = 0; i < txtToolMenuItem.length; i++) {
+        menu.addItem(new BMap.MenuItem(txtToolMenuItem[i].text, txtToolMenuItem[i].callback, 100));
+    }
+    menu.addSeparator();
+    for (var i = 0; i < txtLoadMenuItem.length; i++) {
+        menu.addItem(new BMap.MenuItem(txtLoadMenuItem[i].text, txtLoadMenuItem[i].callback, 100));
+    }
+    menu.addSeparator();
+    for (var i = 0; i < txtClearMenuItem.length; i++) {
+        menu.addItem(new BMap.MenuItem(txtClearMenuItem[i].text, txtClearMenuItem[i].callback, 100));
+    }
+	menu.addSeparator();
+	for (var i = 0; i < txtReloadMenuItem.length; i++) {
+        menu.addItem(new BMap.MenuItem(txtReloadMenuItem[i].text, txtReloadMenuItem[i].callback, 100));
+    }
+    map.addContextMenu(menu);
+</script>
